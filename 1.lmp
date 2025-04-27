@@ -1,0 +1,184 @@
+units metal 
+boundary p p f
+atom_style atomic
+neighbor 2 bin 
+timestep 0.005
+neigh_modify every 1 delay 5 check yes
+# comm_modify cutoff 13.9
+pair_style lj/cut 11.9175 
+#---------------------模型建立-----------------------------------#
+region box block 0 140  0 70 0 370 units box
+create_box 4 box 
+lattice fcc 3.5
+ 
+region cu1 block  INF INF INF INF  0 17.5 units box 
+group cu1 region cu1
+region cu2 block     55 85 20 50 17.5 24.5  units box 
+group cu2 region cu2
+region cu union 2 cu1 cu2 
+create_atoms 4 region cu #中
+region cu3 block   55 85 20 50 18 24.5  units box 
+set region cu3 type 1 #亲
+lattice fcc 5.8
+region ye block INF INF INF INF 18 87.5 units box 
+create_atoms 2 region ye
+lattice fcc 32
+region qi block INF INF INF INF 87.5 370 units box 
+create_atoms 2 region qi 
+mass 1 64 #qing 
+mass 2 39.948 
+mass 3 64 #su 
+mass 4 64 
+#-----------------------力场设置-------------------------#
+variable dcu equal 2.338  #yin的只有这个改为0.234
+variable ecu equal 0.40933
+variable dar equal 3.405
+variable ear equal  0.01033
+variable s equal 0.03
+variable z equal 0.06
+variable q equal 0.08
+variable zcu equal ${z}*sqrt(${ecu}*${ear})
+variable scu equal ${s}*sqrt(${ecu}*${ear})
+variable qcu equal ${q}*sqrt(${ecu}*${ear})
+variable dcuar equal 0.5*(${dcu}+${dar})
+pair_coeff 2 2     ${ear}      ${dar}             #ar-ar
+pair_coeff 2 3     ${scu}      ${dcuar} #scu-ar
+pair_coeff 3 3     ${ecu}      ${dcu}      #qcu-qcu
+pair_coeff 1 3     ${ecu}      ${dcu}     #scu-qcu
+pair_coeff 1 1     ${ecu}      ${dcu}      #qcu-qcu
+pair_coeff 1 2     ${qcu}      ${dcuar}      #qcu-ar
+
+pair_coeff 2 4     ${zcu}      ${dcuar} #zcu-ar
+pair_coeff 4 4     ${ecu}      ${dcu}      #zcu-zcu
+pair_coeff 4 3     ${ecu}      ${dcu}     #scu-zcu
+pair_coeff 4 1     ${ecu}      ${dcu}      #qcu-zcu
+#---------------------区域设置---------------------------#
+region bot  block INF INF  INF INF INF 1 units box 
+group bot region bot
+region hot  block INF INF  INF INF 1 9 units box
+group hot region hot
+group o subtract all bot 
+
+region feiten1 block INF INF INF INF 18 49 units box
+group feiten1 region feiten1
+region qipao1 block INF INF INF INF 17.5 90 units box
+group qipao1 region qipao1
+region wen  block INF INF INF INF 17.5 31.5 units box
+group wen region wen
+region sudutianjia block INF 10 INF INF 17.5 INF units box 
+group sudutianjia region sudutianjia
+region sudu2 block 120 INF INF INF 17.5 INF units box 
+group sudu2 region sudu2 
+group ar type 2
+group cu type 1 3 4
+group mobile_cu subtract o hot ar
+group feiten subtract feiten1 cu 
+group qipao subtract qipao1 cu
+delete_atoms overlap 1.7 ar cu compress yes
+region yanx1 block INF INF 28 42 INF INF units box
+group yanx1 region yanx1
+group yanx subtract yanx1 cu 
+region yany1 block 63 77 INF INF INF INF units box
+group yany1 region yany1
+group yany subtract yany1 cu 
+#--------------------热力学计算--------------------------#
+compute hot_temp hot temp/com 
+compute o_temp o temp/com 
+compute ar_temp ar temp/com 
+compute feiten_temp feiten temp/com 
+compute mobile_cu_temp mobile_cu temp/com 
+compute PE all pe/atom
+compute KE all ke/atom
+compute arpe ar reduce sum c_PE
+compute arke ar reduce sum c_KE
+
+#-------------热导率计算-----------------------------#
+
+#Green-Kubo公式中需要的数据
+variable A equal 140*70*32.5-30*30*7    
+
+#单位转换公式
+
+compute myStress all stress/atom NULL virial
+compute flux feiten heat/flux KE PE myStress
+variable Jz equal c_flux[3]/v_A  #单位/能量*速度/体积
+#---------------------边界设置--------------------------#                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+fix tang cu spring/self  2.9332
+fix  zwall all wall/reflect zlo EDGE zhi 370 units box
+variable loop_f equal 24
+variable F equal ${loop_f}*6.2414E-7
+velocity o create 90  41235
+velocity bot set 0 0 0
+fix bot bot setforce 0 0 0
+#---------------------最小化设置------------------------#
+dump 1 all atom 1000 minimize.xyz
+min_style cg
+minimize 1e-8 1e-10 10000 10000  
+undump 1
+reset_timestep 0 
+#--------------------热力学输出-------------------------#
+thermo 200
+thermo_style custom step c_ar_temp c_hot_temp c_o_temp  c_feiten_temp pe ke  v_Jz  
+#----------------------系统平衡-------------------------#
+fix 1 o nve 
+fix 2 o langevin   90 90 0.5 41235
+fix_modify 2 temp o_temp
+run 200000 #1
+unfix 1
+unfix 2
+fix 1 hot nvt temp  90 90 0.5 
+
+fix_modify 1 temp hot_temp
+fix 2 ar nvt temp  90 90 0.5 
+fix_modify 2 temp ar_temp
+fix 3 mobile_cu nve 
+run 200000 #2
+unfix 1
+unfix 2
+unfix 3
+reset_timestep 0
+
+variable loop_wendu equal 450
+fix sudu sudutianjia addforce ${F} 0.0 0.0
+fix 1 all nve 
+fix 2 hot langevin ${loop_wendu} ${loop_wendu}  0.5 5214
+fix_modify 2 temp hot_temp 
+dump 1 all custom 200 feiteng1.dump id type x y z 
+run 200000 #1
+undump 1
+dump 1 all custom 200 feiteng2.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao22.dat 
+run 200000 #2
+undump 1
+dump 1 all custom 200 feiteng3.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao32.dat 
+run 200000 #3
+undump 1
+dump 1 all custom 200 feiteng4.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao42.dat 
+run 200000 #4
+undump 1
+dump 1 all custom 200 feiteng5.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao52.dat 
+run 200000#5
+undump 1
+dump 1 all custom 200 feiteng6.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao62.dat 
+run 200000#6
+undump 1
+dump 1 all custom 200 feiteng7.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao72.dat 
+run 200000#7
+undump 1
+dump 1 all custom 200 feiteng8.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao82.dat 
+run 200000#8
+undump 1
+dump 1 all custom 200 feiteng9.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao92.dat 
+run 200000#9
+undump 1
+dump 1 all custom 200 feiteng10.dump id type x y z 
+fix qipao2 all ave/chunk 10 20 10000 8 density/mass file qipao102.dat 
+run 200000 #10
+undump 1
